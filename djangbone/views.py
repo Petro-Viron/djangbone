@@ -16,7 +16,7 @@ class DjangboneJSONEncoder(json.JSONEncoder):
         """
         Convert datetime objects to ISO-compatible strings during json serialization.
         """
-        return obj.isoformat() if isinstance(obj, datetime.datetime) else None
+        return obj.isoformat() if isinstance(obj, datetime.datetime) else str(obj)
 
 
 class BackboneAPIView(View):
@@ -30,7 +30,8 @@ class BackboneAPIView(View):
         delete -> DELETE /collection/id
     """
     base_queryset = None        # Queryset to use for all data accesses, eg. User.objects.all()
-    serialize_fields = tuple()  # Tuple of field names that should appear in json output
+    serialize_fields = None     # Tuple of field names that should appear in json output
+    allowed_methods = [ 'GET', 'PUT', 'POST', 'DELETE' ]
 
     # Optional pagination settings:
     page_size = None            # Set to an integer to enable GET pagination (at the specified page size)
@@ -43,6 +44,12 @@ class BackboneAPIView(View):
     # Override these if you have custom JSON encoding/decoding needs:
     json_encoder = DjangboneJSONEncoder()
     json_decoder = json.JSONDecoder()
+
+    def dispatch(self, request, *args, **kwargs):
+        if request.method in self.allowed_methods:
+            return super(BackboneAPIView, self).dispatch(request, *args, **kwargs) 
+        else:
+            return HttpResponse('%s not supported'%request.method, status=405)
 
     def get(self, request, *args, **kwargs):
         """
@@ -151,13 +158,12 @@ class BackboneAPIView(View):
         If the single_object argument is True, or the url specified an id, return a
         single JSON object, otherwise return a JSON array of objects.
         """
-        values = queryset.values(*self.serialize_fields)
+        values = queryset.values(*self.serialize_fields) if self.serialize_fields else queryset.values()
         if single_object or self.kwargs.get('id'):
             # For single-item requests, convert ValuesQueryset to a dict simply
             # by slicing the first item:
-            json_output = self.json_encoder.encode(values[0])
+            json_output = self.json_encoder.encode(values[0] if len(values) else [])
         else:
-            values = queryset.values(*self.serialize_fields)
             # Process pagination options if they are enabled:
             if isinstance(self.page_size, int):
                 try:
@@ -189,9 +195,15 @@ class CustomBackboneAPIView(BackboneAPIView):
 
     def serialize_item(self, item):
         item_dict = model_to_dict(item)
-        for k in item_dict.keys():
-            if k not in self.serialize_fields: del item_dict[k]
+        if self.serialize_fields:
+            for k in item_dict.keys():
+                if k not in self.serialize_fields: del item_dict[k]
+        item_dict['id'] = item.pk
         return item_dict
+
+    def validation_error_response(self, form_errors):
+        errors = ", ".join([ "%s: %s" % (key, ", ".join([error for error in errors])) for key, errors in form_errors.iteritems() ])
+        return HttpResponse(errors, status=500)
 
     def serialize_qs(self, queryset, single_object=False):
         if single_object or self.kwargs.get('id'):
