@@ -80,6 +80,17 @@ class BackboneAPIView(View):
         output = self.serialize_qs(qs)
         return self.success_response(output)
 
+    def get_request_data(self, request):
+        format = request.META.get('CONTENT_TYPE', 'application/json')
+        if format.find("application/x-www-form-urlencoded") != -1:
+            request_dict = request.POST
+        elif format.find("multipart/form-data") != -1:
+            request_dict = request.POST.copy()
+            request_dict.update(request.FILES)
+        else: # fallback to json
+            request_dict = self.json_decoder.decode(request.raw_post_data)
+        return request_dict
+
     def post(self, request, *args, **kwargs):
         """
         Handle a POST request by adding a new model instance.
@@ -94,9 +105,9 @@ class BackboneAPIView(View):
         if self.add_form_class == None:
             return HttpResponse('POST not supported', status=405)
         try:
-            request_dict = self.json_decoder.decode(request.raw_post_data)
+            request_dict = self.get_request_data(request)
         except ValueError:
-            return HttpResponse('Invalid POST JSON', status=400)
+            return HttpResponse('Invalid POST DATA', status=400)
         form = self.add_form_class(request_dict)
         if hasattr(form, 'set_request'):
             form.set_request(request)
@@ -120,11 +131,10 @@ class BackboneAPIView(View):
         if self.edit_form_class == None or not kwargs.has_key('id'):
             return HttpResponse('PUT not supported', status=405)
         try:
-            # Just like with POST requests, Backbone will send the object's data as json:
-            request_dict = self.json_decoder.decode(request.raw_post_data)
+            request_dict = self.get_request_data(request)
             instance = self.base_queryset.get(id=kwargs['id'])
         except ValueError:
-            return HttpResponse('Invalid PUT JSON', status=400)
+            return HttpResponse('Invalid PUT DATA', status=400)
         except ObjectDoesNotExist:
             raise Http404
         form = self.edit_form_class(request_dict, instance=instance)
