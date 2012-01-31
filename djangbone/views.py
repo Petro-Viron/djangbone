@@ -31,7 +31,6 @@ class BackboneAPIView(View):
     """
     base_queryset = None        # Queryset to use for all data accesses, eg. User.objects.all()
     serialize_fields = None     # Tuple of field names that should appear in json output
-    allowed_methods = [ 'GET', 'PUT', 'POST', 'DELETE' ]
 
     # Optional pagination settings:
     page_size = None            # Set to an integer to enable GET pagination (at the specified page size)
@@ -46,10 +45,30 @@ class BackboneAPIView(View):
     json_decoder = json.JSONDecoder()
 
     def dispatch(self, request, *args, **kwargs):
-        if request.method in self.allowed_methods:
-            return super(BackboneAPIView, self).dispatch(request, *args, **kwargs) 
+        # changing method here isn't working, doing it directly in POST
+        # request.method = request.META.get('HTTP_X_HTTP_METHOD_OVERRIDE', request.method)
+
+        # copied / modified from View.dispatch....
+
+        # adding header does not work when there is a form submission
+        # using a hidden iframe (i.e. for file uploads)....
+        # request_method = request.META.get('HTTP_X_HTTP_METHOD_OVERRIDE', request.method)
+        # if request_method.lower() in self.http_method_names:
+        #     handler = getattr(self, request_method.lower(), self.http_method_not_allowed)
+        # else:
+        #     handler = self.http_method_not_allowed
+
+        request_method = request.method.lower()
+        if request_method == 'post':
+            request_method = request.POST.get('_method', 'post').lower()
+        if request_method in self.http_method_names:
+            handler = getattr(self, request_method, self.http_method_not_allowed)
         else:
-            return HttpResponse('%s not supported'%request.method, status=405)
+            handler = self.http_method_not_allowed
+        self.request = request
+        self.args = args
+        self.kwargs = kwargs
+        return handler(request, *args, **kwargs)
 
     def get(self, request, *args, **kwargs):
         """
@@ -83,13 +102,12 @@ class BackboneAPIView(View):
     def get_request_data(self, request):
         format = request.META.get('CONTENT_TYPE', 'application/json')
         if format.find("application/x-www-form-urlencoded") != -1:
-            request_dict = request.POST
+            return (request.POST, None)
         elif format.find("multipart/form-data") != -1:
-            request_dict = request.POST.copy()
-            request_dict.update(request.FILES)
+            return (request.POST, request.FILES)
         else: # fallback to json
             request_dict = self.json_decoder.decode(request.raw_post_data)
-        return request_dict
+            return (request_dict, None)
 
     def post(self, request, *args, **kwargs):
         """
@@ -105,10 +123,10 @@ class BackboneAPIView(View):
         if self.add_form_class == None:
             return HttpResponse('POST not supported', status=405)
         try:
-            request_dict = self.get_request_data(request)
+            request_dict, request_files  = self.get_request_data(request)
         except ValueError:
             return HttpResponse('Invalid POST DATA', status=400)
-        form = self.add_form_class(request_dict)
+        form = self.add_form_class(request_dict, request_files)
         if hasattr(form, 'set_request'):
             form.set_request(request)
         if form.is_valid():
@@ -131,13 +149,13 @@ class BackboneAPIView(View):
         if self.edit_form_class == None or not kwargs.has_key('id'):
             return HttpResponse('PUT not supported', status=405)
         try:
-            request_dict = self.get_request_data(request)
+            request_dict, request_files  = self.get_request_data(request)
             instance = self.base_queryset.get(id=kwargs['id'])
         except ValueError:
             return HttpResponse('Invalid PUT DATA', status=400)
         except ObjectDoesNotExist:
             raise Http404
-        form = self.edit_form_class(request_dict, instance=instance)
+        form = self.edit_form_class(request_dict, request_files, instance=instance)
         if hasattr(form, 'set_request'):
             form.set_request(request)
         if form.is_valid():
