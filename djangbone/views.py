@@ -31,6 +31,7 @@ class BackboneAPIView(View):
     """
     base_queryset = None        # Queryset to use for all data accesses, eg. User.objects.all()
     serialize_fields = None     # Tuple of field names that should appear in json output
+    request_type = "json"
 
     # Optional pagination settings:
     page_size = None            # Set to an integer to enable GET pagination (at the specified page size)
@@ -102,10 +103,13 @@ class BackboneAPIView(View):
     def get_request_data(self, request):
         format = request.META.get('CONTENT_TYPE', 'application/json')
         if format.find("application/x-www-form-urlencoded") != -1:
+            self.request_type = "form"
             return (request.POST, None)
         elif format.find("multipart/form-data") != -1:
+            self.request_type = "form-multipart"
             return (request.POST, request.FILES)
         else: # fallback to json
+            self.request_type = "json"
             request_dict = self.json_decoder.decode(request.raw_post_data)
             return (request_dict, None)
 
@@ -229,9 +233,26 @@ class CustomBackboneAPIView(BackboneAPIView):
         item_dict['id'] = item.pk
         return item_dict
 
+    def success_response(self, output):
+        """
+        Convert json output to an HttpResponse object, with the correct mimetype.
+        """
+        if self.request_type == "form-multipart":
+            return HttpResponse(output, mimetype='text/plain')
+        else:
+            return HttpResponse(output, mimetype='application/json')
+
     def validation_error_response(self, form_errors):
-        errors = ", ".join([ "%s: %s" % (key, ", ".join([error for error in errors])) for key, errors in form_errors.iteritems() ])
-        return HttpResponse(errors, status=500)
+        # errors = ", ".join([ "%s: %s" % (key, ", ".join([error for error in errors])) for key, errors in form_errors.iteritems() ])
+        errors = self.json_encoder.encode({"error":form_errors})
+        if self.request_type == "form-multipart":
+            errors = "<textarea status='500'>" + errors + "</textarea>"
+            # if we return the errors with a status of 500,
+            # firefox puts the response inside a "pre" element...
+            # so we need to respond with a 200 code and deal with the error on the client
+            return HttpResponse(errors, mimetype="text/html")
+        else:
+            return HttpResponse(errors, status=500)
 
     def serialize_qs(self, queryset, single_object=False):
         if single_object or self.kwargs.get('id'):
