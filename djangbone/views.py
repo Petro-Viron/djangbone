@@ -46,19 +46,8 @@ class BackboneAPIView(View):
     json_decoder = json.JSONDecoder()
 
     def dispatch(self, request, *args, **kwargs):
-        # changing method here isn't working, doing it directly in POST
-        # request.method = request.META.get('HTTP_X_HTTP_METHOD_OVERRIDE', request.method)
-
-        # copied / modified from View.dispatch....
-
         # adding header does not work when there is a form submission
         # using a hidden iframe (i.e. for file uploads)....
-        # request_method = request.META.get('HTTP_X_HTTP_METHOD_OVERRIDE', request.method)
-        # if request_method.lower() in self.http_method_names:
-        #     handler = getattr(self, request_method.lower(), self.http_method_not_allowed)
-        # else:
-        #     handler = self.http_method_not_allowed
-
         request_method = request.method.lower()
         if request_method == 'post':
             request_method = request.POST.get('_method', 'post').lower()
@@ -70,6 +59,9 @@ class BackboneAPIView(View):
         self.args = args
         self.kwargs = kwargs
         return handler(request, *args, **kwargs)
+
+    def user_has_perm(self, request, obj):
+        return True
 
     def get(self, request, *args, **kwargs):
         """
@@ -88,6 +80,8 @@ class BackboneAPIView(View):
             qs = self.base_queryset.filter(id=kwargs['id'])
             assert len(qs) == 1
         except AssertionError:
+            raise Http404
+        if not self.user_has_perm(request, qs[0]):
             raise Http404
         output = self.serialize_qs(qs)
         return self.success_response(output)
@@ -159,6 +153,8 @@ class BackboneAPIView(View):
             return HttpResponse('Invalid PUT DATA', status=400)
         except ObjectDoesNotExist:
             raise Http404
+        if not self.user_has_perm(request, instance):
+            raise Http404
         form = self.edit_form_class(request_dict, request_files, instance=instance)
         if hasattr(form, 'set_request'):
             form.set_request(request)
@@ -177,6 +173,8 @@ class BackboneAPIView(View):
             return HttpResponse('DELETE is not supported for collections', status=405)
         qs = self.base_queryset.filter(id=kwargs['id'])
         if qs:
+            if not self.user_has_perm(request, qs[0]):
+                raise Http404
             output = self.serialize_qs(qs)
             qs.delete()
             return self.success_response(output)
