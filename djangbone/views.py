@@ -18,7 +18,6 @@ class DjangboneJSONEncoder(json.JSONEncoder):
         """
         return obj.isoformat() if isinstance(obj, datetime.datetime) else str(obj)
 
-
 class BackboneAPIView(View):
     """
     Abstract class view, which makes it easy for subclasses to talk to backbone.js.
@@ -29,30 +28,28 @@ class BackboneAPIView(View):
         update -> PUT    /collection/id
         delete -> DELETE /collection/id
     """
-    base_queryset = None        # Queryset to use for all data accesses, eg. User.objects.all()
-    serialize_fields = None     # Tuple of field names that should appear in json output
     request_type = "json"
-
-    # Optional pagination settings:
-    page_size = None            # Set to an integer to enable GET pagination (at the specified page size)
-    page_param_name = 'p'       # HTTP GET parameter to use for accessing pages (eg. /widgets?p=2)
-
-    # Override these attributes with ModelForm instances to support PUT and POST requests:
-    add_form_class = None       # Form class to be used for POST requests
-    edit_form_class = None      # Form class to be used for PUT requests
 
     # Override these if you have custom JSON encoding/decoding needs:
     json_encoder = DjangboneJSONEncoder()
     json_decoder = json.JSONDecoder()
 
     def dispatch(self, request, *args, **kwargs):
-        # adding header does not work when there is a form submission
-        # using a hidden iframe (i.e. for file uploads)....
+        """
+        Allow emulating all http methods over POST with an _method field
+        to specify the actual method.
+        i.e. _method = 'PUT' will call the put method.
+
+        This can also be done with including a custom header on the request.
+        However, this fails with something like jquery form plugin which uses
+        a hidden iframe to upload files.
+
+        """
         request_method = request.method.lower()
         if request_method == 'post':
             request_method = request.POST.get('_method', 'post').lower()
         if request_method in self.http_method_names:
-            handler = getattr(self, request_method, self.http_method_not_allowed)
+            handler = getattr(self, "_" + request_method, self.http_method_not_allowed)
         else:
             handler = self.http_method_not_allowed
         self.request = request
@@ -60,39 +57,73 @@ class BackboneAPIView(View):
         self.kwargs = kwargs
         return handler(request, *args, **kwargs)
 
-    def user_has_perm(self, request, obj):
-        return True
+    def create(self, data={}, files={}):
+        """
+        Data, files will be a key, value pair. Child class is responsible
+        for saving the data.
 
-    def get(self, request, *args, **kwargs):
+        Return values:
+        True, dict() -> success (dict is created object)
+        False, { 'status': http_status, 'errors': errors to be returned } 
+
         """
-        Handle GET requests, either for a single resource or a collection.
+        return False, { 'status': 501 }
+
+    def read(self, id=None):
         """
-        if kwargs.get('id'):
-            return self.get_single_item(request, *args, **kwargs)
+        Return single item or collection as dict
+        Return none for 404
+        """
+        if id:
+            return self.read_single_item(id)
         else:
-            return self.get_collection(request, *args, **kwargs)
+            return self.read_collection()
 
-    def get_single_item(self, request, *args, **kwargs):
-        """
-        Handle a GET request for a single model instance.
-        """
-        try:
-            qs = self.base_queryset.filter(id=kwargs['id'])
-            assert len(qs) == 1
-        except AssertionError:
-            raise Http404
-        if not self.user_has_perm(request, qs[0]):
-            raise Http404
-        output = self.serialize_qs(qs)
-        return self.success_response(output)
+    def read_single_item(self, id):
+        return None
 
-    def get_collection(self, request, *args, **kwargs):
+    def read_collection(self):
+        return None
+
+    def update(self, id, data={}, files={}):
         """
-        Handle a GET request for a full collection (when no id was provided).
+        Data, files will be a key, value pair. Child class is responsible
+        for saving the data.
+
+        Return values:
+        True, dict() -> success (dict is updated object)
+        False, { 'status': http_status, 'errors': errors to be returned } 
+
         """
-        qs = self.base_queryset
-        output = self.serialize_qs(qs)
-        return self.success_response(output)
+        return False, { 'status': 501 }
+
+    def delete(self, id):
+        """
+        Return True on succesful delete, false otherwise
+        """
+        return False
+
+    def success_response(self, data=None):
+        if data: obj = self.json_encoder.encode(data)
+        else: obj = ""
+        if self.request_type == "form-multipart":
+            mimetype='text/plain'
+        else:
+            mimetype='application/json'
+
+        return HttpResponse(obj, mimetype=mimetype)
+
+    def error_response(self, data=None, status=400):
+        if data: errors = self.json_encoder.encode({"error":data})
+        else: errors = ""
+        if self.request_type == "form-multipart":
+            errors = "<textarea status='" + status + "'>" + errors + "</textarea>"
+            # if we return the errors with a status of 500,
+            # firefox puts the response inside a "pre" element...
+            # so we need to respond with a 200 code and deal with the error on the client
+            return HttpResponse(errors, mimetype="text/html")
+        else:
+            return HttpResponse(errors, status=status, mimetype="application/json")
 
     def get_request_data(self, request):
         format = request.META.get('CONTENT_TYPE', 'application/json')
@@ -107,7 +138,121 @@ class BackboneAPIView(View):
             request_dict = self.json_decoder.decode(request.raw_post_data)
             return (request_dict, None)
 
-    def post(self, request, *args, **kwargs):
+    def _get(self, request, *args, **kwargs):
+        """
+        Handle GET requests, either for a single resource or a collection.
+        """
+        data = self.read(kwargs.get('id', None))
+        if data:
+            return self.success_response(data)
+        else:
+            return self.error_response(status=404)
+
+    def _post(self, request, *args, **kwargs):
+        try:
+            data, files = self.get_request_data(request)
+        except ValueError:
+            return self.error_response(status=400)
+        success, data = self.create(data, files)
+
+        if success:
+            return self.success_response(data)
+        else:
+            return self.error_response(data.get('errors', {}), data.get('status', 400))
+
+    def _put(self, request, *args, **kwargs):
+        try:
+            id = kwargs['id']
+            data, files = self.get_request_data(request)
+        except ValueError:
+            return HttpResponse('Invalid POST DATA', status=400)
+        except KeyError:
+            raise Http404
+        success, data = self.update(id, data, files)
+
+        if success:
+            return self.success_response(data)
+        else:
+            return self.error_response(data.get('errors', {}), data.get('status', 400))
+
+    def _delete(self, request, *args, **kwargs):
+        if not kwargs.has_key('id'):
+            return HttpResponse('DELETE is not supported for collections', status=405)
+        id = kwargs['id']
+        success = self.delete(id)
+        if success:
+            return self.success_response()
+        else:
+            return self.error_response(status=404)
+
+class ModelAPIView(BackboneAPIView):
+    """
+    Abstract class view, which makes it easy for subclasses to talk to backbone.js.
+
+    Supported operations (copied from backbone.js docs):
+        create -> POST   /collection
+        read ->   GET    /collection[/id]
+        update -> PUT    /collection/id
+        delete -> DELETE /collection/id
+    """
+    base_queryset = None        # Queryset to use for all data accesses, eg. User.objects.all()
+    serialize_fields = None     # Tuple of field names that should appear in json output
+
+    # Optional pagination settings:
+    page_size = None            # Set to an integer to enable GET pagination (at the specified page size)
+    page_param_name = 'p'       # HTTP GET parameter to use for accessing pages (eg. /widgets?p=2)
+
+    # Override these attributes with ModelForm instances to support PUT and POST requests:
+    add_form_class = None       # Form class to be used for POST requests
+    edit_form_class = None      # Form class to be used for PUT requests
+
+    def user_has_perm(self, request, obj):
+        return True
+
+    def serialize_qs(self, queryset, single_object=False):
+        """
+        Serialize a queryset into a JSON object that can be consumed by backbone.js.
+
+        If the single_object argument is True, or the url specified an id, return a
+        single JSON object, otherwise return a JSON array of objects.
+        """
+        values = queryset.values(*self.serialize_fields) if self.serialize_fields else queryset.values()
+        if self.kwargs.get('id') or single_object:
+            # For single-item requests, convert ValuesQueryset to a dict simply
+            # by slicing the first item:
+           return (values[0] if len(values) else {})
+        else:
+            # Process pagination options if they are enabled:
+            if isinstance(self.page_size, int):
+                try:
+                    page_number = int(self.request.GET.get(self.page_param_name, 1))
+                    offset = (page_number - 1) * self.page_size
+                except ValueError:
+                    offset = 0
+                values = values[offset:offset+self.page_size]
+            return list(values)
+
+    def read_single_item(self, id):
+        """
+        Handle a GET request for a single model instance.
+        """
+        try:
+            qs = self.base_queryset.filter(id=id)
+            assert len(qs) == 1
+        except AssertionError:
+            return None
+        if not self.user_has_perm(self.request, qs[0]):
+            raise None
+        return self.serialize_qs(qs)
+
+    def read_collection(self):
+        """
+        Handle a GET request for a full collection (when no id was provided).
+        """
+        qs = self.base_queryset
+        return self.serialize_qs(qs)
+
+    def create(self, data={}, files={}):
         """
         Handle a POST request by adding a new model instance.
 
@@ -119,24 +264,20 @@ class BackboneAPIView(View):
         so use our json decoder on it, rather than looking at request.POST.
         """
         if self.add_form_class == None:
-            return HttpResponse('POST not supported', status=405)
-        try:
-            request_dict, request_files  = self.get_request_data(request)
-        except ValueError:
-            return HttpResponse('Invalid POST DATA', status=400)
-        form = self.add_form_class(request_dict, request_files)
+            return False, { 'status': 501 }
+        form = self.add_form_class(data, files)
         if hasattr(form, 'set_request'):
-            form.set_request(request)
+            form.set_request(self.request)
         if form.is_valid():
             new_object = form.save()
             # Serialize the new object to json using our built-in methods.
             # The extra DB read here is not ideal, but it keeps the code DRY:
             wrapper_qs = self.base_queryset.filter(id=new_object.id)
-            return self.success_response(self.serialize_qs(wrapper_qs, single_object=True))
+            return True, self.serialize_qs(wrapper_qs, single_object=True)
         else:
-            return self.validation_error_response(form.errors)
+            return False, { 'errors': form.errors, 'status': 400 }
 
-    def put(self, request, *args, **kwargs):
+    def update(self, id, data={}, files={}):
         """
         Handle a PUT request by editing an existing model.
 
@@ -144,84 +285,38 @@ class BackboneAPIView(View):
         by the subclass. This should be a ModelForm corresponding to the model used by
         base_queryset.
         """
-        if self.edit_form_class == None or not kwargs.has_key('id'):
-            return HttpResponse('PUT not supported', status=405)
+        if self.edit_form_class == None:
+            return False, { 'status': 501 }
         try:
-            request_dict, request_files  = self.get_request_data(request)
-            instance = self.base_queryset.get(id=kwargs['id'])
-        except ValueError:
-            return HttpResponse('Invalid PUT DATA', status=400)
+            instance = self.base_queryset.get(pk=id)
         except ObjectDoesNotExist:
-            raise Http404
-        if not self.user_has_perm(request, instance):
-            raise Http404
-        form = self.edit_form_class(request_dict, request_files, instance=instance)
+            return False, { 'status': 404 }
+        if not self.user_has_perm(self.request, instance):
+            return False, { 'status': 404 }
+        form = self.edit_form_class(data, files, instance=instance)
         if hasattr(form, 'set_request'):
-            form.set_request(request)
+            form.set_request(self.request)
         if form.is_valid():
             item = form.save()
             wrapper_qs = self.base_queryset.filter(id=item.id)
-            return self.success_response(self.serialize_qs(wrapper_qs, single_object=True))
+            return True, self.serialize_qs(wrapper_qs, single_object=True)
         else:
-            return self.validation_error_response(form.errors)
+            return False, { 'errors': form.errors, 'status': 400 }
 
-    def delete(self, request, *args, **kwargs):
+    def delete(self, id):
         """
-        Respond to DELETE requests by deleting the model and returning its JSON representation.
+        Respond to DELETE requests by deleting the model
         """
-        if not kwargs.has_key('id'):
-            return HttpResponse('DELETE is not supported for collections', status=405)
-        qs = self.base_queryset.filter(id=kwargs['id'])
+        qs = self.base_queryset.filter(id=id)
         if qs:
-            if not self.user_has_perm(request, qs[0]):
-                raise Http404
-            output = self.serialize_qs(qs)
+            if not self.user_has_perm(self.request, qs[0]):
+                return False
             qs.delete()
-            return self.success_response(output)
+            return True
         else:
-            raise Http404
+            raise False
 
-    def serialize_qs(self, queryset, single_object=False):
-        """
-        Serialize a queryset into a JSON object that can be consumed by backbone.js.
-
-        If the single_object argument is True, or the url specified an id, return a
-        single JSON object, otherwise return a JSON array of objects.
-        """
-        values = queryset.values(*self.serialize_fields) if self.serialize_fields else queryset.values()
-        if single_object or self.kwargs.get('id'):
-            # For single-item requests, convert ValuesQueryset to a dict simply
-            # by slicing the first item:
-            json_output = self.json_encoder.encode(values[0] if len(values) else [])
-        else:
-            # Process pagination options if they are enabled:
-            if isinstance(self.page_size, int):
-                try:
-                    page_number = int(self.request.GET.get(self.page_param_name, 1))
-                    offset = (page_number - 1) * self.page_size
-                except ValueError:
-                    offset = 0
-                values = values[offset:offset+self.page_size]
-            json_output = self.json_encoder.encode(list(values))
-        return json_output
-
-    def success_response(self, output):
-        """
-        Convert json output to an HttpResponse object, with the correct mimetype.
-        """
-        return HttpResponse(output, mimetype='application/json')
-
-    def validation_error_response(self, form_errors):
-        """
-        Return an HttpResponse indicating that input validation failed.
-
-        The form_errors argument contains the contents of form.errors, and you
-        can override this method is you want to use a specific error response format.
-        By default, the output is a simple text response.
-        """
-        return HttpResponse('ERROR: validation failed')
-
-class CustomBackboneAPIView(BackboneAPIView):
+class CustomModelAPIView(ModelAPIView):
 
     def serialize_item(self, item):
         item_dict = model_to_dict(item)
@@ -231,32 +326,11 @@ class CustomBackboneAPIView(BackboneAPIView):
         item_dict['id'] = item.pk
         return item_dict
 
-    def success_response(self, output):
-        """
-        Convert json output to an HttpResponse object, with the correct mimetype.
-        """
-        if self.request_type == "form-multipart":
-            return HttpResponse(output, mimetype='text/plain')
-        else:
-            return HttpResponse(output, mimetype='application/json')
-
-    def validation_error_response(self, form_errors):
-        # errors = ", ".join([ "%s: %s" % (key, ", ".join([error for error in errors])) for key, errors in form_errors.iteritems() ])
-        errors = self.json_encoder.encode({"error":form_errors})
-        if self.request_type == "form-multipart":
-            errors = "<textarea status='500'>" + errors + "</textarea>"
-            # if we return the errors with a status of 500,
-            # firefox puts the response inside a "pre" element...
-            # so we need to respond with a 200 code and deal with the error on the client
-            return HttpResponse(errors, mimetype="text/html")
-        else:
-            return HttpResponse(errors, status=500)
-
     def serialize_qs(self, queryset, single_object=False):
         if single_object or self.kwargs.get('id'):
             # For single-item requests, convert ValuesQueryset to a dict simply
             # by slicing the first item:
-            json_output = self.json_encoder.encode(self.serialize_item(queryset[0]))
+            return self.serialize_item(queryset[0])
         else:
             paginated_queryset = queryset
             # Process pagination options if they are enabled:
@@ -268,5 +342,5 @@ class CustomBackboneAPIView(BackboneAPIView):
                     offset = 0
                 paginated_queryset = queryset[offset:offset+self.page_size]
             values = [ self.serialize_item(i) for i in paginated_queryset ]
-            json_output = self.json_encoder.encode(values)
-        return json_output
+            return values
+
