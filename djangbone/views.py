@@ -117,7 +117,7 @@ class BackboneAPIView(View):
         if data: errors = self.json_encoder.encode({"error":data})
         else: errors = ""
         if self.request_type == "form-multipart":
-            errors = "<textarea status='" + status + "'>" + errors + "</textarea>"
+            errors = "<textarea status='%d'>%s</textarea>"%(status,errors)
             # if we return the errors with a status of 500,
             # firefox puts the response inside a "pre" element...
             # so we need to respond with a 200 code and deal with the error on the client
