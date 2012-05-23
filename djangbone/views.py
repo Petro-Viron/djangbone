@@ -242,7 +242,7 @@ class ModelAPIView(BackboneAPIView):
         except AssertionError:
             return None
         if not self.user_has_perm(self.request, qs[0]):
-            raise None
+            return None
         return self.serialize_qs(qs)
 
     def read_collection(self):
@@ -314,7 +314,7 @@ class ModelAPIView(BackboneAPIView):
             qs.delete()
             return True
         else:
-            raise False
+            return False
 
 class CustomModelAPIView(ModelAPIView):
 
