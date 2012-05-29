@@ -5,6 +5,10 @@ from django.core.exceptions import ObjectDoesNotExist
 from django.http import HttpResponse, Http404
 from django.views.generic import View
 from django.forms.models import model_to_dict
+from utils.logging import logging_dict, get_data_diff
+
+import logging
+logger = logging.getLogger('pivot.api')
 
 class DjangboneJSONEncoder(json.JSONEncoder):
     """
@@ -270,11 +274,15 @@ class ModelAPIView(BackboneAPIView):
             form.set_request(self.request)
         if form.is_valid():
             new_object = form.save()
+            logger.info("%s:CREATE:SUCCESS:%s: id=%s, data=%s, files=%s"%\
+                    (self.base_queryset.model.__name__, self.request.user.username, new_object.pk, logging_dict(data), logging_dict(files)))
             # Serialize the new object to json using our built-in methods.
             # The extra DB read here is not ideal, but it keeps the code DRY:
             wrapper_qs = self.base_queryset.filter(id=new_object.id)
             return True, self.serialize_qs(wrapper_qs, single_object=True)
         else:
+            logger.warning("%s:CREATE:ERROR:%s: data=%s, files=%s, errors=%s"%\
+                    (self.base_queryset.model.__name__, self.request.user.username, logging_dict(data), logging_dict(files), logging_dict(form.errors)))
             return False, { 'errors': form.errors, 'status': 400 }
 
     def update(self, id, data={}, files={}):
@@ -287,20 +295,25 @@ class ModelAPIView(BackboneAPIView):
         """
         if self.edit_form_class == None:
             return False, { 'status': 501 }
-        try:
-            instance = self.base_queryset.get(pk=id)
-        except ObjectDoesNotExist:
+        qs = self.base_queryset.filter(pk=id)
+        if not len(qs) == 1:
             return False, { 'status': 404 }
+        instance = qs[0]
         if not self.user_has_perm(self.request, instance):
             return False, { 'status': 404 }
         form = self.edit_form_class(data, files, instance=instance)
         if hasattr(form, 'set_request'):
             form.set_request(self.request)
+        data_diff = get_data_diff(qs, data)
         if form.is_valid():
+            logger.info("%s:UPDATE:SUCCESS:%s: id=%s, updated_data=%s, files=%s"%\
+                    (self.base_queryset.model.__name__, self.request.user.username, instance.pk, data_diff, logging_dict(files)))
             item = form.save()
             wrapper_qs = self.base_queryset.filter(id=item.id)
             return True, self.serialize_qs(wrapper_qs, single_object=True)
         else:
+            logger.info("%s:UPDATE:ERROR:%s: id=%s, updated_data=%s, files=%s"%\
+                    (self.base_queryset.model.__name__, self.request.user.username, instance.pk, data_diff, logging_dict(files)))
             return False, { 'errors': form.errors, 'status': 400 }
 
     def delete(self, id):
@@ -311,6 +324,8 @@ class ModelAPIView(BackboneAPIView):
         if qs:
             if not self.user_has_perm(self.request, qs[0]):
                 return False
+            logger.info("%s:DELETE:SUCCESS:%s: id=%s"%\
+                    (self.base_queryset.model.__name__, self.request.user.username, qs[0].pk))
             qs.delete()
             return True
         else:
