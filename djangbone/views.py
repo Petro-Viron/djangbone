@@ -210,7 +210,7 @@ class ModelAPIView(BackboneAPIView):
     add_form_class = None       # Form class to be used for POST requests
     edit_form_class = None      # Form class to be used for PUT requests
 
-    def user_has_perm(self, request, obj):
+    def user_has_perm(self, request, obj, action=None):
         return True
 
     def serialize_qs(self, queryset, single_object=False):
@@ -245,7 +245,7 @@ class ModelAPIView(BackboneAPIView):
             assert len(qs) == 1
         except AssertionError:
             return None
-        if not self.user_has_perm(self.request, qs[0]):
+        if not self.user_has_perm(self.request, qs[0], 'read_single_item'):
             return None
         return self.serialize_qs(qs)
 
@@ -254,6 +254,8 @@ class ModelAPIView(BackboneAPIView):
         Handle a GET request for a full collection (when no id was provided).
         """
         qs = self.base_queryset
+        if not self.user_has_perm(self.request, qs[0], 'read_collection'):
+            return None
         return self.serialize_qs(qs)
 
     def create(self, data={}, files={}):
@@ -269,6 +271,8 @@ class ModelAPIView(BackboneAPIView):
         """
         if self.add_form_class == None:
             return False, { 'status': 501 }
+        if not self.user_has_perm(self.request, None, 'create'):
+            return False, { 'status': 403 }
         form = self.add_form_class(data, files)
         if hasattr(form, 'set_request'):
             form.set_request(self.request)
@@ -299,7 +303,7 @@ class ModelAPIView(BackboneAPIView):
         if not len(qs) == 1:
             return False, { 'status': 404 }
         instance = qs[0]
-        if not self.user_has_perm(self.request, instance):
+        if not self.user_has_perm(self.request, instance, 'update'):
             return False, { 'status': 404 }
         form = self.edit_form_class(data, files, instance=instance)
         if hasattr(form, 'set_request'):
@@ -307,13 +311,7 @@ class ModelAPIView(BackboneAPIView):
         data_diff = get_data_diff(qs, data)
         if form.is_valid():
             logger.info("%s:UPDATE:SUCCESS:%s: id=%s, updated_data=%s, files=%s"%\
-                    (self.base_queryset.model.__name__, self.request.user.username, instance.pk, data_diff, logging_dict(files)))
-            item = form.save()
-            wrapper_qs = self.base_queryset.filter(id=item.id)
-            return True, self.serialize_qs(wrapper_qs, single_object=True)
-        else:
-            logger.info("%s:UPDATE:ERROR:%s: id=%s, updated_data=%s, files=%s"%\
-                    (self.base_queryset.model.__name__, self.request.user.username, instance.pk, data_diff, logging_dict(files)))
+                    (self.base_queryset.model.__name__, self.request.user.username, instance.pk, datyset.model.__name__, self.request.user.username, instance.pk, data_diff, logging_dict(files)))
             return False, { 'errors': form.errors, 'status': 400 }
 
     def delete(self, id):
@@ -322,7 +320,7 @@ class ModelAPIView(BackboneAPIView):
         """
         qs = self.base_queryset.filter(id=id)
         if qs:
-            if not self.user_has_perm(self.request, qs[0]):
+            if not self.user_has_perm(self.request, qs[0], 'delete'):
                 return False
             logger.info("%s:DELETE:SUCCESS:%s: id=%s"%\
                     (self.base_queryset.model.__name__, self.request.user.username, qs[0].pk))
