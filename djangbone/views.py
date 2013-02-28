@@ -311,7 +311,13 @@ class ModelAPIView(BackboneAPIView):
         data_diff = get_data_diff(qs, data)
         if form.is_valid():
             logger.info("%s:UPDATE:SUCCESS:%s: id=%s, updated_data=%s, files=%s"%\
-                    (self.base_queryset.model.__name__, self.request.user.username, instance.pk, datyset.model.__name__, self.request.user.username, instance.pk, data_diff, logging_dict(files)))
+                    (self.base_queryset.model.__name__, self.request.user.username, instance.pk, data_diff, logging_dict(files)))
+            item = form.save()
+            wrapper_qs = self.base_queryset.filter(id=item.id)
+            return True, self.serialize_qs(wrapper_qs, single_object=True)
+        else:
+            logger.info("%s:UPDATE:ERROR:%s: id=%s, updated_data=%s, files=%s"%\
+                    (self.base_queryset.model.__name__, self.request.user.username, instance.pk, data_diff, logging_dict(files)))
             return False, { 'errors': form.errors, 'status': 400 }
 
     def delete(self, id):
