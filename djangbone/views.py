@@ -139,7 +139,7 @@ class BackboneAPIView(View):
             return (request.POST, request.FILES)
         else: # fallback to json
             self.request_type = "json"
-            request_dict = self.json_decoder.decode(request.raw_post_data)
+            request_dict = self.json_decoder.decode(request.body)
             return (request_dict, None)
 
     def _get(self, request, *args, **kwargs):
