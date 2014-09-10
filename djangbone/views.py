@@ -111,11 +111,11 @@ class BackboneAPIView(View):
         if data: obj = self.json_encoder.encode(data)
         else: obj = ""
         if self.request_type == "form-multipart":
-            mimetype='text/plain'
+            content_type='text/plain'
         else:
-            mimetype='application/json'
+            content_type='application/json'
 
-        return HttpResponse(obj, mimetype=mimetype)
+        return HttpResponse(obj, content_type=content_type)
 
     def error_response(self, data=None, status=400):
         if data: errors = self.json_encoder.encode({"error":data})
@@ -125,9 +125,9 @@ class BackboneAPIView(View):
             # if we return the errors with a status of 500,
             # firefox puts the response inside a "pre" element...
             # so we need to respond with a 200 code and deal with the error on the client
-            return HttpResponse(errors, mimetype="text/html")
+            return HttpResponse(errors, content_type="text/html")
         else:
-            return HttpResponse(errors, status=status, mimetype="application/json")
+            return HttpResponse(errors, status=status, content_type="application/json")
 
     def get_request_data(self, request):
         format = request.META.get('CONTENT_TYPE', 'application/json')
