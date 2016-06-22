@@ -113,6 +113,7 @@ class BackboneAPIView(View):
         if self.request_type == "form-multipart":
             content_type='text/plain'
         else:
+            obj = obj or "{}"
             content_type='application/json'
 
         return HttpResponse(obj, content_type=content_type)
@@ -127,6 +128,7 @@ class BackboneAPIView(View):
             # so we need to respond with a 200 code and deal with the error on the client
             return HttpResponse(errors, content_type="text/html")
         else:
+            errors = errors or "{}"
             return HttpResponse(errors, status=status, content_type="application/json")
 
     def get_request_data(self, request):
