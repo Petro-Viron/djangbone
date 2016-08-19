@@ -141,7 +141,7 @@ class BackboneAPIView(View):
             return (request.POST, request.FILES)
         else: # fallback to json
             self.request_type = "json"
-            request_dict = self.json_decoder.decode(request.body)
+            request_dict = self.json_decoder.decode(request.body.decode())
             return (request_dict, None)
 
     def _get(self, request, *args, **kwargs):
@@ -182,7 +182,7 @@ class BackboneAPIView(View):
             return self.error_response(data.get('errors', {}), data.get('status', 400))
 
     def _delete(self, request, *args, **kwargs):
-        if not kwargs.has_key('id'):
+        if 'id' not in kwargs:
             return HttpResponse('DELETE is not supported for collections', status=405)
         id = kwargs['id']
         success = self.delete(id)
