@@ -68,7 +68,7 @@ class BackboneAPIView(View):
 
         Return values:
         True, dict() -> success (dict is created object)
-        False, { 'status': http_status, 'errors': errors to be returned } 
+        False, { 'status': http_status, 'errors': errors to be returned }
 
         """
         return False, { 'status': 501 }
@@ -96,7 +96,7 @@ class BackboneAPIView(View):
 
         Return values:
         True, dict() -> success (dict is updated object)
-        False, { 'status': http_status, 'errors': errors to be returned } 
+        False, { 'status': http_status, 'errors': errors to be returned }
 
         """
         return False, { 'status': 501 }
@@ -342,7 +342,7 @@ class CustomModelAPIView(ModelAPIView):
     def serialize_item(self, item):
         item_dict = model_to_dict(item)
         if self.serialize_fields:
-            for k in item_dict.keys():
+            for k in list(item_dict.keys()):
                 if k not in self.serialize_fields: del item_dict[k]
         item_dict['id'] = item.pk
         return item_dict
